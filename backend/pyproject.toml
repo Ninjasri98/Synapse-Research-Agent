@@ -8,4 +8,5 @@ dependencies = [
     "crewai>=1.6.1",
     "loguru>=0.7.3",
     "python-dotenv>=1.2.2",
+    "sqlalchemy>=2.0.48",
 ]
