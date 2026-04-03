@@ -1,10 +1,11 @@
-from typing import Any, Dict, List, Optional
+from typing import List, Dict, Any, Optional
 import uuid
 from loguru import logger
 from openai import AsyncOpenAI
 from qdrant_client import AsyncQdrantClient
 from qdrant_client.http import models as rest
 from qdrant_client.http.models import Distance, VectorParams
+import os
 class QdrantSourceStore:
     """Service for storing and retrieving source documents using Qdrant and OpenAI embeddings."""
 
@@ -264,3 +265,94 @@ class QdrantSourceStore:
         logger.info(f"Found {len(results)} matching results")
         return results
 
+    async def get_all_chunks_by_notebook_id(self, notebook_id: str) -> List[Dict[str, Any]]:
+        """Get all chunks for a specific notebook ID.
+
+        Args:
+            notebook_id: Notebook ID to retrieve chunks for
+
+        Returns:
+            List of all chunks for the notebook with their metadata
+        """
+        if not self._initialized:
+            await self.initialize()
+        logger.info(f"Retrieving all chunks for notebook: {notebook_id}")
+
+        # Set up filter for notebook_id
+        filter_param = rest.Filter(
+            must=[
+                rest.FieldCondition(
+                    key="notebook_id",
+                    match=rest.MatchValue(value=notebook_id),
+                )
+            ]
+        )
+
+        # Use scroll to get all points for the notebook
+        logger.info(f"Scrolling through all chunks for notebook: {notebook_id}")
+        scroll_result = await self.qdrant_client.scroll(
+            collection_name=self.collection_name,
+            scroll_filter=filter_param,
+            limit=10000,
+            with_payload=True,
+            with_vectors=False,
+        )
+
+        # Format results
+        results = []
+        for point in scroll_result[0]:
+            results.append({
+                "id": point.id,
+                "content_chunk": point.payload.get("content_chunk"),
+                "chunk_index": point.payload.get("chunk_index"),
+                "total_chunks": point.payload.get("total_chunks"),
+                "notebook_id": point.payload.get("notebook_id"),
+                "metadata": point.payload.get("metadata"),
+                "url": point.payload.get("url"),
+                "page_title": point.payload.get("page_title"),
+            })
+
+        # Sort by chunk_index to maintain order
+        results.sort(key=lambda x: x.get("chunk_index", 0))
+
+        logger.info(f"Retrieved {len(results)} chunks for notebook {notebook_id}")
+        return results
+
+    async def delete_by_notebook_id(self, notebook_id: str) -> int:
+        """Delete all sources for a specific notebook ID.
+
+        Args:
+            notebook_id: Notebook ID to delete
+
+        Returns:
+            Number of deleted points
+        """
+        if not self._initialized:
+            await self.initialize()
+        logger.info(f"Deleting all sources for notebook: {notebook_id}")
+
+        filter_param = rest.Filter(
+            must=[
+                rest.FieldCondition(
+                    key="notebook_id",
+                    match=rest.MatchValue(value=notebook_id),
+                )
+            ]
+        )
+
+        result = await self.qdrant_client.delete(
+            collection_name=self.collection_name,
+            points_selector=rest.FilterSelector(filter=filter_param),
+        )
+
+        logger.info(f"Deleted points for notebook {notebook_id}")
+        return result.status
+
+# Create an instance without initialization
+qdrant_service = QdrantSourceStore(
+    qdrant_url=os.getenv("QDRANT_API_URL"),
+    qdrant_api_key=os.getenv("QDRANT_API_KEY"),
+    collection_name="notebook_sources",
+    embedding_model="text-embedding-3-small",
+    openai_api_key=os.getenv("OPENAI_API_KEY"),
+)
