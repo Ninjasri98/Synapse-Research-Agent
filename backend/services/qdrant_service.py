@@ -1,4 +1,5 @@
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
+import uuid
 from loguru import logger
 from openai import AsyncOpenAI
 from qdrant_client import AsyncQdrantClient
@@ -137,3 +138,129 @@ class QdrantSourceStore:
 
         logger.info(f"Created {len(chunks)} chunks")
         return chunks
+
+    async def add_source(
+        self,
+        content: str,
+        notebook_id: str,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> List[str]:
+        """Add source document to Qdrant.
+
+        Args:
+            content: Source content
+            notebook_id: Notebook ID for filtering
+            metadata: Additional metadata
+
+        Returns:
+            List of IDs for the stored chunks
+        """
+        if not self._initialized:
+            await self.initialize()
+        logger.info(f"Adding source document for notebook {notebook_id}")
+
+        if metadata is None:
+            metadata = {}
+
+        # Chunk content for better retrieval
+        chunks = self._chunk_text(content)
+
+        # Store IDs of added chunks
+        chunk_ids = []
+
+        # Process each chunk
+        logger.info(f"Processing {len(chunks)} chunks")
+        for i, chunk in enumerate(chunks):
+            # Generate unique ID
+            chunk_id = str(uuid.uuid4())
+            chunk_ids.append(chunk_id)
+
+            # Create payload
+            payload = {
+                "content_chunk": chunk,
+                "chunk_index": i,
+                "total_chunks": len(chunks),
+                "notebook_id": notebook_id,
+                **metadata,
+            }
+
+            # Get embedding
+            embedding = await self._get_embedding(chunk)
+
+            # Store in Qdrant
+            logger.info(f"Storing chunk {i+1}/{len(chunks)} in Qdrant")
+            await self.qdrant_client.upsert(
+                collection_name=self.collection_name,
+                points=[
+                    rest.PointStruct(
+                        id=chunk_id,
+                        vector=embedding,
+                        payload=payload,
+                    )
+                ],
+            )
+
+        logger.info(f"Added source with {len(chunks)} chunks for notebook {notebook_id}")
+        return chunk_ids
+
+    async def search(
+        self,
+        query: str,
+        notebook_id: Optional[str] = None,
+        limit: int = 5,
+    ) -> List[Dict[str, Any]]:
+        """Search for sources based on query and notebook ID.
+
+        Args:
+            query: Search query
+            notebook_id: Optional notebook ID to filter results
+            limit: Maximum number of results
+
+        Returns:
+            List of matching sources with scores
+        """
+        if not self._initialized:
+            await self.initialize()
+        logger.info(f"Searching for: '{query}' in notebook: {notebook_id}")
+
+        # Get query embedding
+        query_embedding = await self._get_embedding(query)
+
+        # Set up filter if notebook_id is provided
+        filter_param = None
+        if notebook_id:
+            logger.info(f"Applying notebook filter: {notebook_id}")
+            filter_param = rest.Filter(
+                must=[
+                    rest.FieldCondition(
+                        key="notebook_id",
+                        match=rest.MatchValue(value=notebook_id),
+                    )
+                ]
+            )
+
+        # Search in Qdrant
+        logger.info(f"Executing search with limit: {limit}")
+        search_result = await self.qdrant_client.search(
+            collection_name=self.collection_name,
+            query_vector=query_embedding,
+            limit=limit,
+            query_filter=filter_param,
+        )
+
+        # Format results
+        results = []
+        for scored_point in search_result:
+            results.append({
+                "id": scored_point.id,
+                "score": scored_point.score,
+                "content_chunk": scored_point.payload.get("content_chunk"),
+                "notebook_id": scored_point.payload.get("notebook_id"),
+                "metadata": scored_point.payload.get("metadata"),
+                "url": scored_point.payload.get("url"),
+                "page_title": scored_point.payload.get("page_title"),
+            })
+
+        logger.info(f"Found {len(results)} matching results")
+        return results
+
