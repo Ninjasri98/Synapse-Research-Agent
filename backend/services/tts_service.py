@@ -135,3 +135,123 @@ class TTSService:
         except Exception as e:
             logger.error(f"Failed to generate TTS audio for notebook {notebook_id}: {e}")
             raise
+
+    async def _generate_audio_with_semaphore(
+        self,
+        text: str,
+        voice: str,
+        segment_num: int,
+        total_segments: int
+    ) -> bytes:
+        """Generate audio with semaphore for rate limiting."""
+        async with self.semaphore:
+            logger.debug(f"Generating audio for segment {segment_num}/{total_segments} - Voice: {voice}")
+            return await self._generate_audio(text, voice)
+
+    async def _combine_audio_segments(
+        self,
+        audio_bytes_list: List[bytes],
+        valid_segments: List[tuple]
+    ) -> bytes:
+        """Combine audio segments efficiently with proper memory management."""
+        logger.info(f"Combining {len(audio_bytes_list)} audio segments")
+
+        combined_audio = None
+        output_buffer = None
+
+        try:
+            # Process segments one by one to minimize memory usage
+            for i, audio_bytes in enumerate(audio_bytes_list):
+                async with self._audio_segment_context(audio_bytes) as segment_audio:
+                    if combined_audio is None:
+                        combined_audio = segment_audio
+                    else:
+                        combined_audio += segment_audio
+
+                    # Add pause between segments (except for the last one)
+                    if i < len(audio_bytes_list) - 1:
+                        pause = AudioSegment.silent(duration=self.pause_duration)
+                        combined_audio += pause
+
+            if combined_audio is None:
+                raise Exception("No audio segments to combine")
+
+            # Export to bytes with explicit buffer management
+            output_buffer = io.BytesIO()
+            combined_audio.export(output_buffer, format="mp3")
+            audio_content = output_buffer.getvalue()
+
+            logger.info(f"Successfully generated combined TTS audio ({len(audio_content)} bytes)")
+            return audio_content
+
+        finally:
+            # Explicit cleanup
+            if output_buffer:
+                output_buffer.close()
+            del combined_audio
+
+    async def _generate_audio(self, text: str, voice: str = "sarah") -> bytes:
+        """
+        Generate audio from text using LemonFox AI API.
+        Uses connection pooling for efficiency.
+
+        Args:
+            text: The text to convert to speech
+            voice: The voice to use for TTS
+
+        Returns:
+            Audio file content as bytes
+        """
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json"
+        }
+
+        payload = {
+            "input": text,
+            "voice": voice,
+            "response_format": self.response_format
+        }
+
+        client = await self._get_client()
+
+        try:
+            response = await client.post(
+                self.base_url,
+                headers=headers,
+                json=payload
+            )
+
+            if response.status_code != 200:
+                error_msg = f"TTS API request failed with status {response.status_code}: {response.text}"
+                logger.error(error_msg)
+                raise Exception(error_msg)
+
+            return response.content
+
+        except httpx.TimeoutException:
+            error_msg = "TTS API request timed out"
+            logger.error(error_msg)
+            raise Exception(error_msg)
+        except Exception as e:
+            error_msg = f"TTS API request failed: {str(e)}"
+            logger.error(error_msg)
+            raise Exception(error_msg)
+
+    async def __aenter__(self):
+        """Async context manager entry."""
+        return self
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        """Async context manager exit with cleanup."""
+        await self.close()
+
+
+# Singleton instance
+tts_service = TTSService()
+
+
+# Cleanup function for graceful shutdown
+async def cleanup_tts_service():
+    """Cleanup function to be called on application shutdown."""
+    await tts_service.close()
