@@ -6,7 +6,9 @@ from loguru import logger
 from datetime import datetime
 import time
 from models.topic_research_models import WebScrapingPlannerTaskResult, WebScrapingLinkCollectorTaskResult, WebLink, BlogPostTaskResult, FaqTaskResult
+from typing import List
 from config import llm, TOPIC_RESEARCH_AGENT_CONFIGS, TOPIC_RESEARCH_TASK_CONFIGS
+import asyncio
 server_params = StdioServerParameters(
     command="npm",
     args=["exec", "-y", "@brightdata/mcp"],
@@ -175,9 +177,91 @@ async def run_research_crew(topic: str):
                 "topic": topic,
                 "current_time": current_time
             })
+
+            logger.info(f"Planning crew result: {planning_crew_result}")
+
+            search_queries = planning_crew_result["search_queries"]
+
+            logger.info(f"Search queries: {search_queries}")
+
+            scraped_data = []
+            links: List[WebLink] = []
+
+            logger.info(f"Running web scraping link collector crew for {len(search_queries)} search queries")
+
+            # Create tasks for parallel execution
+            link_collector_tasks = []
+            for search_query in search_queries:
+                logger.info(f"Creating task for search query {search_query}")
+                link_collector_tasks.append(
+                    web_scraping_link_collector_crew.kickoff_async(inputs={
+                        "topic": topic,
+                        "search_query": search_query,
+                        "current_time": current_time,
+                    })
+                )
+
+            # Execute all tasks in parallel
+            link_collector_results = await asyncio.gather(*link_collector_tasks)
+
+            # Process results and collect unique links
+            links = []
+            for result in link_collector_results:
+                logger.info(f"Processing link collector result: {result}")
+                result_links = result["links"]
+                for link in result_links:
+                    if link.url not in [l.url for l in links]:
+                        links.append(link)
+
+            logger.info(f"Unique Links Collected: {links}")
+
+            logger.info(f"Running web scraping crew for {len(links)} links")
+
+            # Create tasks for parallel web scraping
+            web_scraping_tasks = []
+            for link in links:
+                web_scraping_tasks.append(
+                    web_scraping_crew.kickoff_async(inputs={
+                        "topic": topic,
+                        "url": link.url,
+                        "current_time": current_time,
+                    })
+                )
+
+            # Execute all web scraping tasks in parallel
+            web_scraping_results = await asyncio.gather(*web_scraping_tasks)
+
+            # Process results and collect scraped data
+            for link, result in zip(links, web_scraping_results):
+                logger.info(f"Web scraping crew result for link {link}: {result}")
+                scraped_data.append({
+                    "url": link.url,
+                    "page_title": link.title,
+                    "content": result.raw
+                })
+
+            logger.info(f"Scraped data: {scraped_data}")
+
+            research_content_crew_result = await research_content_crew.kickoff_async(inputs={
+                "topic": topic,
+                "scraped_data": scraped_data,
+                "current_time": current_time,
+            })
+
+            faq_result = faq_task.output.pydantic.faq
+            logger.info(f"FAQ task result: {faq_result}")
+
+            logger.info(f"Research and content creation crew result: {research_content_crew_result}")
+
+            return {
+                "blog_post": research_content_crew_result["blog_post"],
+                "title": research_content_crew_result["title"],
+                "links": [link.model_dump() for link in links],
+                "scraped_data": scraped_data,
+                "faq": [faq.model_dump() for faq in faq_result]
+            }
     except Exception as e:
         logger.error(f"Error in topic research agent: {e}")
         raise e
     finally:
         logger.info(f"Time taken by topic research agent: {round(time.time() - start_time, 2)} seconds")
-
