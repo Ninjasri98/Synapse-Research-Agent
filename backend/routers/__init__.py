@@ -1,0 +1,1 @@
+"""Router package for the Synapse Research Agent API."""
