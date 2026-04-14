@@ -1,10 +1,12 @@
-from fastapi import FastAPI, APIRouter
+from fastapi import FastAPI, status, APIRouter
 from fastapi.middleware.cors import CORSMiddleware
 from loguru import logger
 from datetime import datetime
 from contextlib import asynccontextmanager
 
 from services import initialize_db_pool, close_db_pool
+from routers.research import router as research_router
+from routers.chat import router as chat_router
 
 # Create router for API endpoints
 router = APIRouter(prefix="/api")
@@ -52,3 +54,5 @@ app.add_middleware(
 
 # Include the routers
 app.include_router(router)
+app.include_router(research_router, prefix="/api")
+app.include_router(chat_router, prefix="/api")
