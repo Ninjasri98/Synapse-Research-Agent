@@ -2,6 +2,7 @@ from fastapi import APIRouter, HTTPException, status
 from loguru import logger
 
 from services import task_manager
+from services.notebook_repository import notebook_repository
 from models.task_models import (
     ResearchRequest,
     TaskResponse,
@@ -67,3 +68,79 @@ async def get_task_details(task_id: str):
             detail="Task not found."
         )
     return TaskStatusResponse(**task_info, task_id=task_id)
+
+@router.post(
+    "/audio-overview/{notebook_id}",
+    response_model=TaskResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Generate audio overview from notebook summary",
+    description="Creates an audio overview using the summary from a completed notebook research. The task runs in the background."
+)
+async def generate_audio_overview(notebook_id: str):
+    """Generate an audio overview from a notebook's research summary."""
+    logger.info(f"Generating audio overview for notebook: {notebook_id}")
+
+    # Validate notebook exists
+    notebook = await notebook_repository.get_notebook(notebook_id)
+    if not notebook:
+        logger.warning(f"Notebook not found: {notebook_id}")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Notebook not found."
+        )
+
+    try:
+        # Submit audio overview task
+        task_id = await task_manager.submit_audio_overview_task_async(notebook_id)
+        logger.info(f"Audio overview task submitted for notebook: {notebook_id}")
+
+        return TaskResponse(
+            task_id=task_id,
+            notebook_id=notebook_id,
+            status="IN_QUEUE",
+            message="Audio overview task submitted and will be processed."
+        )
+    except Exception as e:
+        logger.error(f"Error submitting audio overview task for notebook {notebook_id}: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to submit audio overview task. Please try again."
+        )
+
+@router.post(
+    "/mindmap/{notebook_id}",
+    response_model=TaskResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Generate mindmap from notebook research",
+    description="Creates a mindmap structure from the research content in a completed notebook. The task runs in the background."
+)
+async def generate_mindmap(notebook_id: str):
+    """Generate a mindmap from a notebook's research content."""
+    logger.info(f"Generating mindmap for notebook: {notebook_id}")
+
+    # Validate notebook exists
+    notebook = await notebook_repository.get_notebook(notebook_id)
+    if not notebook:
+        logger.warning(f"Notebook not found: {notebook_id}")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Notebook not found."
+        )
+
+    try:
+        # Submit mindmap task
+        task_id = await task_manager.submit_mindmap_task_async(notebook_id)
+        logger.info(f"Mindmap task submitted for notebook: {notebook_id}")
+
+        return TaskResponse(
+            task_id=task_id,
+            notebook_id=notebook_id,
+            status="IN_QUEUE",
+            message="Mindmap task submitted and will be processed."
+        )
+    except Exception as e:
+        logger.error(f"Error submitting mindmap task for notebook {notebook_id}: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to submit mindmap task. Please try again."
+        )
