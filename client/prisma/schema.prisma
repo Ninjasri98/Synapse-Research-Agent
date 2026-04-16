@@ -12,3 +12,155 @@ datasource db {
   provider = "postgresql"
 }
 
+model User {
+  id            String     @id
+  name          String
+  email         String
+  emailVerified Boolean
+  image         String?
+  createdAt     DateTime
+  updatedAt     DateTime
+  sessions      Session[]
+  accounts      Account[]
+  notebooks     Notebook[]
+
+  @@unique([email])
+  @@map("user")
+}
+
+model Session {
+  id        String   @id
+  expiresAt DateTime
+  token     String
+  createdAt DateTime
+  updatedAt DateTime
+  ipAddress String?
+  userAgent String?
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([token])
+  @@map("session")
+}
+
+model Account {
+  id                    String    @id
+  accountId             String
+  providerId            String
+  userId                String
+  user                  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  accessToken           String?
+  refreshToken          String?
+  idToken               String?
+  accessTokenExpiresAt  DateTime?
+  refreshTokenExpiresAt DateTime?
+  scope                 String?
+  password              String?
+  createdAt             DateTime
+  updatedAt             DateTime
+
+  @@map("account")
+}
+
+model Verification {
+  id         String    @id
+  identifier String
+  value      String
+  expiresAt  DateTime
+  createdAt  DateTime?
+  updatedAt  DateTime?
+
+  @@map("verification")
+}
+
+model Jwks {
+  id         String   @id
+  publicKey  String
+  privateKey String
+  createdAt  DateTime
+
+  @@map("jwks")
+}
+
+enum NotebookProcessingStatusValue {
+  IN_QUEUE
+  IN_PROGRESS
+  PROCESSED
+  ERROR
+}
+
+enum NotebookDocumentSourceType {
+  UPLOAD
+  URL
+  MANUAL
+}
+
+model Notebook {
+  id               String                    @id @default(uuid())
+  userId           String
+  title            String?
+  topic            String?
+  createdAt        DateTime                  @default(now())
+  updatedAt        DateTime                  @updatedAt
+  user             User                      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  sources          NotebookSource[]
+  output           NotebookOutput?
+  processingStatus NotebookProcessingStatus?
+
+  @@index([userId])
+  @@map("notebooks")
+}
+
+model NotebookSource {
+  id            String                     @id @default(uuid())
+  notebookId    String
+  sourceType    NotebookDocumentSourceType
+  sourceUrl     String?
+  sourceUrlText String?
+  filePath      String?
+  filename      String?
+  content       String?                    @db.Text
+  createdAt     DateTime                   @default(now())
+  notebook      Notebook                   @relation(fields: [notebookId], references: [id], onDelete: Cascade)
+
+  @@index([notebookId])
+  @@map("notebook_sources")
+}
+
+model NotebookOutput {
+  id               String        @id @default(uuid())
+  notebookId       String        @unique
+  summary          String        @db.Text
+  audioOverviewUrl String?       @db.Text
+  mindmap          String?       @db.Text
+  createdAt        DateTime      @default(now())
+  notebook         Notebook      @relation(fields: [notebookId], references: [id], onDelete: Cascade)
+  faqs             NotebookFaq[]
+
+  @@map("notebook_outputs")
+}
+
+model NotebookProcessingStatus {
+  id         String                        @id @default(cuid())
+  status     NotebookProcessingStatusValue @default(IN_QUEUE)
+  message    String?
+  createdAt  DateTime                      @default(now())
+  updatedAt  DateTime                      @updatedAt
+  notebookId String                        @unique
+  notebook   Notebook                      @relation(fields: [notebookId], references: [id], onDelete: Cascade)
+
+  @@map("notebook_processing_status")
+}
+
+model NotebookFaq {
+  id               String         @id @default(uuid())
+  question         String         @db.Text
+  answer           String         @db.Text
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+  notebookOutputId String
+  notebookOutput   NotebookOutput @relation(fields: [notebookOutputId], references: [id], onDelete: Cascade)
+
+  @@index([notebookOutputId])
+  @@map("notebook_faqs")
+}
