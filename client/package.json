@@ -6,6 +6,11 @@
     "dev": "next dev --turbopack",
     "build": "next build",
     "start": "next start",
+    "prisma:generate": "prisma generate",
+    "prisma:migrate:dev": "prisma migrate dev",
+    "prisma:migrate:deploy": "prisma migrate deploy",
+    "prisma:studio": "prisma studio",
+    "db:push": "prisma db push",
     "lint": "next lint"
   },
   "dependencies": {
