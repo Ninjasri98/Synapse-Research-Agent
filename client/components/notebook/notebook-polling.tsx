@@ -157,3 +157,36 @@ const ChatInterface = memo(
 );
 
 ChatInterface.displayName = "ChatInterface";
+
+// FAQ component
+const FaqList = memo(
+  ({ faqs }: { faqs: { question: string; answer: string }[] }) => {
+    if (!faqs || faqs.length === 0) {
+      return (
+        <div className="flex items-center justify-center h-[400px] text-muted-foreground">
+          No FAQs available for this notebook
+        </div>
+      );
+    }
+
+    return (
+      <div className="space-y-6">
+        {faqs.map((faq, index) => (
+          <div key={index} className="space-y-2">
+            <h3 className="text-lg font-semibold">{faq.question}</h3>
+            <div className="markdown-container prose prose-sm max-w-none dark:prose-invert">
+              <ReactMarkdown
+                remarkPlugins={[remarkGfm]}
+                components={MarkdownComponents}
+              >
+                {faq.answer}
+              </ReactMarkdown>
+            </div>
+          </div>
+        ))}
+      </div>
+    );
+  }
+);
+
+FaqList.displayName = "FaqList";
