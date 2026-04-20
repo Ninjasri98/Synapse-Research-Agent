@@ -2,7 +2,9 @@
 
 import { useState, useEffect, useCallback, memo, useRef } from "react";
 import {
+    Brain,
   Loader2,
+  RefreshCw,
   Send,
 } from "lucide-react";
 
@@ -11,6 +13,8 @@ import remarkGfm from "remark-gfm";
 import { MarkdownComponents } from "@/components/ui/markdown-components";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
+import { toast } from "sonner";
+import { VisualMindmap } from "./visual-mindmap";
 
 // Chat message type
 type Message = {
@@ -190,3 +194,197 @@ const FaqList = memo(
 );
 
 FaqList.displayName = "FaqList";
+
+// Mindmap Tab Content component
+const MindmapTabContent = memo(
+  ({
+    notebookId,
+    initialMindmap,
+  }: {
+    notebookId: string;
+    initialMindmap?: string | null;
+  }) => {
+    const [mindmap, setMindmap] = useState<string | null>(
+      initialMindmap || null
+    );
+    const [isGenerating, setIsGenerating] = useState(false);
+
+    // Start polling when mindmap is in progress
+    useEffect(() => {
+      if (mindmap !== "IN_PROGRESS") {
+        return;
+      }
+
+      const pollInterval = setInterval(async () => {
+        try {
+          const response = await fetch(`/api/notebooks/${notebookId}`, {
+            method: "GET",
+            headers: {
+              "Content-Type": "application/json",
+            },
+          });
+
+          if (!response.ok) {
+            throw new Error("Failed to fetch notebook");
+          }
+
+          const notebook = await response.json();
+          const newMindmap = notebook.output?.mindmap;
+
+          if (newMindmap && newMindmap !== "IN_PROGRESS") {
+            setMindmap(newMindmap);
+
+            if (newMindmap === "ERROR") {
+              toast.error("Mindmap generation failed", {
+                description: "There was an error generating the mindmap.",
+              });
+            } else {
+              toast.success("Mindmap ready!", {
+                description: "Your mindmap has been generated successfully.",
+              });
+            }
+          }
+        } catch (error) {
+          console.error("Error polling for mindmap:", error);
+        }
+      }, 3000); // Poll every 3 seconds
+
+      return () => {
+        clearInterval(pollInterval);
+      };
+    }, [mindmap, notebookId]);
+
+    const handleGenerateMindmap = async () => {
+      if (isGenerating) return;
+
+      setIsGenerating(true);
+      try {
+        const response = await fetch(`/api/notebooks/${notebookId}/mindmap`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+        });
+
+        if (!response.ok) {
+          throw new Error("Failed to generate mindmap");
+        }
+
+        // Set mindmap to IN_PROGRESS to start polling
+        setMindmap("IN_PROGRESS");
+
+        toast.success("Mindmap generation started", {
+          description:
+            "Your mindmap is being generated. This may take a few minutes.",
+        });
+      } catch (error) {
+        console.error("Error generating mindmap:", error);
+        toast.error("Failed to generate mindmap", {
+          description: error instanceof Error ? error.message : "Unknown error",
+        });
+      } finally {
+        setIsGenerating(false);
+      }
+    };
+
+    const handleRetryMindmap = async () => {
+      if (isGenerating) return;
+      await handleGenerateMindmap();
+    };
+
+    if (!mindmap) {
+      return (
+        <div className="text-center flex flex-col items-center space-y-4 py-8">
+          <div className="flex items-center justify-center mb-4">
+            <Brain className="h-12 w-12 text-muted-foreground" />
+          </div>
+          <h3 className="text-lg font-semibold">Generate Mindmap</h3>
+          <p className="text-muted-foreground max-w-md mx-auto">
+            Generate a visual mindmap of your research to better understand the
+            connections and structure.
+          </p>
+          <Button
+            onClick={handleGenerateMindmap}
+            disabled={isGenerating}
+            className="flex items-center gap-2"
+          >
+            {isGenerating ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <Brain className="h-4 w-4" />
+            )}
+            {isGenerating ? "Generating..." : "Generate Mindmap"}
+          </Button>
+        </div>
+      );
+    }
+
+    if (mindmap === "IN_PROGRESS") {
+      return (
+        <div className="text-center space-y-4 py-8">
+          <div className="flex items-center justify-center gap-2 mb-4">
+            <Loader2 className="h-8 w-8 animate-spin text-primary" />
+          </div>
+          <h3 className="text-lg font-semibold">Generating mindmap...</h3>
+          <p className="text-muted-foreground max-w-md mx-auto">
+            Our AI is analyzing your research and creating a visual mindmap.
+            This may take a few minutes.
+          </p>
+        </div>
+      );
+    }
+
+    if (mindmap === "ERROR") {
+      return (
+        <div className="text-center flex flex-col items-center space-y-4 py-8">
+          <div className="flex items-center justify-center gap-2 mb-4 text-destructive">
+            <Brain className="h-8 w-8" />
+          </div>
+          <h3 className="text-lg font-semibold text-destructive">
+            Generation failed
+          </h3>
+          <p className="text-muted-foreground max-w-md mx-auto">
+            There was an error generating your mindmap. Please try again.
+          </p>
+          <Button
+            onClick={handleRetryMindmap}
+            disabled={isGenerating}
+            variant="outline"
+            className="flex items-center gap-2"
+          >
+            <RefreshCw
+              className={`h-4 w-4 ${isGenerating ? "animate-spin" : ""}`}
+            />
+            {isGenerating ? "Retrying..." : "Try Again"}
+          </Button>
+        </div>
+      );
+    }
+
+    try {
+      const mindmapData = JSON.parse(mindmap);
+      return (
+        <div className="space-y-4">
+          <div className="flex items-center justify-between">
+            <div>
+              <h3 className="text-lg font-semibold">{mindmapData.title}</h3>
+              <p className="text-muted-foreground text-sm">
+                {mindmapData.description}
+              </p>
+            </div>
+          </div>
+          <VisualMindmap mindmapData={mindmapData} />
+        </div>
+      );
+    } catch (error) {
+      console.error("Error parsing mindmap:", error);
+      return (
+        <div className="text-center text-muted-foreground py-8">
+          Error displaying mindmap. Invalid format.
+        </div>
+      );
+    }
+  }
+);
+
+MindmapTabContent.displayName = "MindmapTabContent";
